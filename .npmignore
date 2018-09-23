@@ -1,0 +1,8 @@
+fixtures
+.vscode
+.editorconfig
+.eslintignore
+.eslintrc.js
+.gitignore
+.travis.yml
+CHANGELOG.md
