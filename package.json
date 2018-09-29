@@ -5,7 +5,8 @@
   "main": "index.js",
   "scripts": {
     "test": "npx eslint .",
-    "start": "node example.js"
+    "start": "node example-express.js",
+    "pions": "node example-pions.js"
   },
   "repository": {
     "type": "git",
