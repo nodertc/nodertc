@@ -1,5 +1,6 @@
 'use strict';
 
+const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const express = require('express');
@@ -17,7 +18,16 @@ app.use(bodyParser.json());
 app.use(express.static('fixtures'));
 app.use(morgan('dev'));
 
-rtc.use(app);
+app.post('/offer', async (req, res) => {
+  const { type, sdp: offer } = req.body;
+
+  assert.strictEqual(type, 'offer', 'Expected an SDP offer');
+
+  const session = rtc.createSession();
+  const answer = await session.createAnswer(offer);
+
+  res.json({ sdp: answer, type: 'answer' });
+});
 
 rtc.on('session', session => {
   console.log('[nodertc] got new session');

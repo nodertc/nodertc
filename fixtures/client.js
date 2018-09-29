@@ -7,45 +7,18 @@ const pcconfig = {
   iceCandidatePoolSize: 0xff,
 };
 
-const ICECANDIDATE_REGEXP = /^candidate:(?<foundation>[\w\d]+) (?<component>[\w\d]+) (?<protocol>\w+) (?<priority>\d+) (?<ip>[\d.:]+) (?<port>\d+) typ (?<type>\w+)/;
-
-const ICEUFRAG_REGEXP = /ufrag (?<username>[\w+\/]+)/i;
-
 const pc = new RTCPeerConnection(pcconfig);
 
 pc.addEventListener('icecandidate', async ({ candidate }) => {
-  if (!candidate) {
+  if (candidate) {
     return;
   }
 
-  const parsed = candidate.candidate.match(ICECANDIDATE_REGEXP);
-  const unameParsed = candidate.candidate.match(ICEUFRAG_REGEXP);
-
-  console.group('candidate');
-  console.log(candidate.candidate);
-  console.groupEnd('candidate');
-
-  const { ip, port, protocol, type, priority } = parsed.groups;
-
-  if (protocol.toLowerCase() !== 'udp') {
-    return;
-  }
-
-  await fetch('/candidate', {
-    method: 'post',
-    body: JSON.stringify({
-      ip,
-      port: Number(port),
-      protocol,
-      type,
-      username: unameParsed && unameParsed.groups.username,
-      priority: Number(priority),
-    }),
-    headers: {
-      Accept: 'application/json, text/plain, */*',
-      'Content-Type': 'application/json',
-    },
-  });
+  const offer = pc.localDescription;
+  console.log('[pc] send offer\n', offer.sdp);
+  const answer = await sendOffer(offer);
+  console.log('[pc] got answer\n', answer.sdp);
+  await pc.setRemoteDescription(answer);
 });
 
 pc.addEventListener('negotiationneeded', async () => {
@@ -53,18 +26,6 @@ pc.addEventListener('negotiationneeded', async () => {
     iceRestart: true,
   });
   await pc.setLocalDescription(offer);
-  console.log('[pc] send offer\n', offer.sdp);
-
-  const answer = await sendOffer(offer);
-  console.log('[pc] got answer\n', answer.sdp);
-
-  await pc.setRemoteDescription(answer);
-
-  const { username } = offer.sdp.match(/a=ice-ufrag:(?<username>[^\s]+)/).groups;
-  const candidates = await getCandidates(username);
-
-  await Promise.all(candidates.map(candidate => pc.addIceCandidate(candidate)));
-  console.log('[pc] got ICE candidates\n', ...candidates);
 });
 
 pc.addEventListener('datachannel', ({ channel }) => {
@@ -117,19 +78,4 @@ async function sendOffer(offer) {
   });
 
   return res.json();
-}
-
-/**
- * Get candidates to connect.
- * @returns {object[]}
- */
-async function getCandidates(username) {
-  const res2 = await fetch(`/candidates/${btoa(username)}`, {
-    headers: {
-      Accept: 'application/json, text/plain, */*',
-      'Content-Type': 'application/json',
-    },
-  });
-
-  return res2.json();
 }

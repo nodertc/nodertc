@@ -3,16 +3,17 @@
 const assert = require('assert');
 const Emitter = require('events');
 const dgram = require('dgram');
+const { isIPv4 } = require('net');
 const internalIp = require('internal-ip');
 const publicIp = require('public-ip');
 const stun = require('stun');
 const dtls = require('@nodertc/dtls');
-const sorted = require('sorted-array-functions');
 const unicast = require('unicast');
 const pem = require('pem-file');
 const fingerprint = require('./lib/fingerprint');
 const { createPassword, createUsername } = require('./lib/ice-util');
 const sdp = require('./lib/sdp');
+const Candidates = require('./lib/candidates');
 
 const {
   STUN_ATTR_XOR_MAPPED_ADDRESS,
@@ -21,6 +22,7 @@ const {
   STUN_ATTR_ICE_CONTROLLING,
   STUN_ATTR_PRIORITY,
   STUN_EVENT_BINDING_REQUEST,
+  STUN_EVENT_BINDING_RESPONSE,
   STUN_EVENT_BINDING_ERROR_RESPONSE,
   STUN_BINDING_RESPONSE,
   STUN_BINDING_REQUEST,
@@ -48,78 +50,6 @@ const _dtls = Symbol('dtls');
 const _candidates = Symbol('candidates');
 
 const tieBreaker = Buffer.from('ffaecc81e3dae860', 'hex');
-
-/**
- * Create SDP candidate.
- * @param {object} options
- * @param {number} options.foundation
- * @param {number} options.priority
- * @param {number} options.port
- * @param {string} options.ip
- * @param {string} options.transport
- * @param {string} options.type
- * @param {string} options.username
- * @returns {string}
- */
-function createCandidate(options = {}) {
-  const { foundation, priority, ip, port, transport, type, username } = options;
-
-  return `candidate:${foundation} 1 ${transport} ${priority} ${ip} ${port} typ ${type} generation 0 ufrag ${username}`;
-}
-
-/**
- * Ordered collection of WebRTC ICE candidates.
- */
-class Candidates {
-  /**
-   * @constructor
-   */
-  constructor() {
-    this[_candidates] = [];
-  }
-
-  /**
-   * Add a new candidate.
-   * @param {string} address
-   * @param {number} port
-   * @param {number} priority
-   */
-  push(address, port, priority) {
-    const value = { address, port, priority };
-    const filter = (left, right) => (left.priority < right.priority ? 1 : -1);
-
-    sorted.add(this[_candidates], value, filter);
-  }
-
-  /**
-   * @returns {number}
-   */
-  get length() {
-    return this[_candidates].length;
-  }
-
-  /**
-   * @returns {string}
-   */
-  get primaryAddress() {
-    if (this[_candidates].length === 0) {
-      throw new Error('Empty list of candidates.');
-    }
-
-    return this[_candidates][0].address;
-  }
-
-  /**
-   * @returns {number}
-   */
-  get primaryPort() {
-    if (this[_candidates].length === 0) {
-      throw new Error('Empty list of candidates.');
-    }
-
-    return this[_candidates][0].port;
-  }
-}
 
 /**
  * WebRTC session.
@@ -217,26 +147,38 @@ class Session extends Emitter {
     this.emit('offer', offer);
 
     this[_offer] = sdp.parse(offer);
-    const mid = 'data';
-    const { media } = this[_offer];
 
-    if (Array.isArray(media) && media.length > 0) {
-      const mediadata = media[0];
+    const { media, fingerprint: fgprint } = this[_offer];
+    const haveMediaData = Array.isArray(media) && media.length > 0;
 
-      assert(mediadata.protocol === 'DTLS/SCTP', 'Invalid protocol');
-
-      this[_peerIceUsername] = mediadata.iceUfrag;
-      this[_peerIcePassword] = mediadata.icePwd;
-
-      this[_peerFingerprint] = mediadata.fingerprint.hash;
-      console.log(
-        '[nodertc] remote certificate fingerprint (%s) %s',
-        mediadata.fingerprint.type,
-        mediadata.fingerprint.hash
-      );
-    } else {
-      throw new Error('Invalid SDP');
+    if (!haveMediaData) {
+      throw new Error('Invalid SDP offer');
     }
+
+    const mediadata = media.find(item => item.protocol === 'DTLS/SCTP');
+
+    if (!mediadata) {
+      throw new Error('Datachannel not found');
+    }
+
+    const { candidates } = mediadata;
+
+    this[_peerIceUsername] = mediadata.iceUfrag;
+    this[_peerIcePassword] = mediadata.icePwd;
+
+    this[_peerFingerprint] =
+      (fgprint && fgprint.hash) || mediadata.fingerprint.hash;
+
+    if (!Array.isArray(candidates)) {
+      throw new TypeError('Session should have at least one candidate');
+    }
+
+    candidates
+      .filter(candidate => isIPv4(candidate.ip))
+      .forEach(({ ip, port, priority }) => {
+        this.appendCandidate(ip, port, priority);
+        this.emit('candidate');
+      });
 
     await this.listen();
 
@@ -244,7 +186,19 @@ class Session extends Emitter {
       username: this.username,
       password: this[_icePassword],
       fingerprint: this[_fingerprint],
-      mid,
+      mid: 'data',
+      candidates: [
+        {
+          ip: this[_internalIp],
+          port: this.port,
+          type: 'host',
+        },
+        {
+          ip: this[_publicIp],
+          port: this.port,
+          type: 'srflx',
+        },
+      ],
     });
 
     this.emit('answer', this[_answer]);
@@ -264,8 +218,8 @@ class Session extends Emitter {
 
     this.startSTUN();
 
-    // Start DTLS server when peer ready.
-    this.once('candidate', () => this.startDTLS());
+    // Start DTLS server after first STUN answer.
+    this.stun.once(STUN_EVENT_BINDING_RESPONSE, () => this.startDTLS());
   }
 
   /**
@@ -432,18 +386,6 @@ class NodeRTC extends Emitter {
   }
 
   /**
-   * Bind NodeRTC to http transport to exchage SDP.
-   * @param {object} router express or any compatible router.
-   */
-  use(router) {
-    router.post('/offer', (req, res) => handleOffer(this, req, res));
-    router.post('/candidate', (req, res) => handleCandidate(this, req, res));
-    router.get('/candidates/:username', (req, res) =>
-      getCandidates(this, req, res)
-    );
-  }
-
-  /**
    * Creates new webrtc session.
    * @returns {Session}
    */
@@ -485,6 +427,7 @@ class NodeRTC extends Emitter {
 
     console.log('[nodertc] external ip', external);
     console.log('[nodertc] internal ip', internal);
+    this.emit('ready');
   }
 }
 
@@ -497,110 +440,4 @@ class NodeRTC extends Emitter {
  */
 function create(options = {}) {
   return new NodeRTC(options);
-}
-
-/**
- * Handler for `/offer` url.
- * @param {NodeRTC} nodertc
- * @param {object} req
- * @param {object} res
- */
-async function handleOffer(nodertc, req, res) {
-  const { type, sdp: offer } = req.body;
-
-  assert.strictEqual(type, 'offer', 'Expected an SDP offer');
-
-  const session = nodertc.createSession();
-  const answer = await session.createAnswer(offer);
-
-  res.json({ sdp: answer, type: 'answer' });
-}
-
-/**
- * Handler for `POST /candidate` url.
- * @param {NodeRTC} nodertc
- * @param {object} req
- * @param {object} res
- */
-function handleCandidate(nodertc, req, res) {
-  const { ip, port, username, priority } = req.body;
-  console.log('[nodertc] got ice candidate', ip, port, username, priority);
-
-  const session = nodertc[_sessions].find(
-    sessionItem => sessionItem[_peerIceUsername] === username
-  );
-
-  if (session) {
-    console.log('[nodertc] found session for candidate');
-
-    session.appendCandidate(ip, port, priority);
-    session.emit('candidate', req.body);
-  }
-
-  res.send();
-}
-
-/**
- * Handler for `GET /candidates` url.
- * @param {NodeRTC} nodertc
- * @param {object} req
- * @param {object} res
- */
-function getCandidates(nodertc, req, res) {
-  const { username } = req.params;
-  const uname = Buffer.from(username, 'base64').toString('ascii');
-
-  const session = nodertc[_sessions].find(
-    sessionItem => sessionItem[_peerIceUsername] === uname
-  );
-
-  const internalCandidate = createCandidate({
-    foundation: 4235452027,
-    component: 1,
-    transport: 'udp',
-    priority: 2113937151,
-    ip: nodertc.internal,
-    port: session.port,
-    type: 'host',
-    username: session.username,
-  });
-
-  const externalCandidate = createCandidate({
-    foundation: 4235452028,
-    component: 1,
-    transport: 'udp',
-    priority: 1677729535,
-    ip: nodertc.external,
-    port: session.port,
-    type: 'srflx',
-    username: session.username,
-  });
-
-  console.log(
-    '[nodertc] send ice candidate',
-    nodertc.internal,
-    session.port,
-    session.username
-  );
-  console.log(
-    '[nodertc] send ice candidate',
-    nodertc.external,
-    session.port,
-    session.username
-  );
-
-  res.json([
-    {
-      candidate: internalCandidate,
-      sdpMLineIndex: 0,
-      sdpMid: 'data',
-      usernameFragment: session.username,
-    },
-    {
-      candidate: externalCandidate,
-      sdpMLineIndex: 0,
-      sdpMid: 'data',
-      usernameFragment: session.username,
-    },
-  ]);
 }
