@@ -37,7 +37,7 @@
     "prettier": "^1.14.2"
   },
   "dependencies": {
-    "@nodertc/dtls": "^0.4.0",
+    "@nodertc/dtls": "^0.5.0-0",
     "internal-ip": "^3.0.1",
     "is-dtls": "^2.0.0",
     "pem-file": "^1.0.0",
