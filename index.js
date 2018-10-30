@@ -8,6 +8,7 @@ const internalIp = require('internal-ip');
 const publicIp = require('public-ip');
 const stun = require('stun');
 const dtls = require('@nodertc/dtls');
+const sctp = require('@nodertc/sctp');
 const unicast = require('unicast');
 const pem = require('pem-file');
 const fingerprint = require('./lib/fingerprint');
@@ -303,6 +304,41 @@ class Session extends Emitter {
     this.dtls.on('error', err => {
       console.error('[nodertc][dtls]', err);
     });
+
+    this.startSCTP();
+  }
+
+  /**
+   * Starts SCTP server.
+   */
+  startSCTP() {
+    console.log('[nodertc][sctp] start');
+
+    this.sctp = sctp.createServer({
+      transport: this.dtls,
+    });
+
+    this.sctp.once('listening', () => {
+      console.log('[nodertc][sctp] server started');
+    });
+
+    this.sctp.on('connection', socket => {
+      console.log('[nodertc][sctp] got a new connection!');
+
+      socket.on('data', packet => {
+        console.log('[nodertc][sctp] got data', packet.toString('hex'));
+      });
+
+      socket.on('error', err => {
+        console.error('[nodertc][sctp]', err);
+      });
+    });
+
+    this.sctp.on('error', err => {
+      console.error('[nodertc][sctp]', err);
+    });
+
+    this.sctp.listen(5000); // Port defined in SDP
   }
 
   /**
