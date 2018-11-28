@@ -6,4 +6,10 @@
 
 WebRTC Datachannels for Node.js
 
-## UNDER ACTIVE DEVELOPMENT
+## UNDER ~~ACTIVE~~ DEVELOPMENT
+
+## Usage
+
+1. `git clone` and `npm i`
+2. type `npm start` to run demo
+3. open `localhost:7007` in your browser (Chrome).
