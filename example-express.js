@@ -1,6 +1,7 @@
 'use strict';
 
 const assert = require('assert');
+const readline = require('readline');
 const fs = require('fs');
 const path = require('path');
 const express = require('express');
@@ -34,6 +35,25 @@ rtc.on('session', session => {
 
   session.on('offer', () => {
     console.log('[nodertc] got offer');
+  });
+
+  session.once('channel', channel => {
+    console.log('[nodertc] got channel %s', channel.label);
+
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+    });
+
+    rl.on('line', line => {
+      channel.write(line);
+    });
+
+    channel.on('data', data => {
+      console.log(`${data.toString()}`);
+
+      rl.prompt();
+    });
   });
 });
 

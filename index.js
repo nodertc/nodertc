@@ -9,6 +9,7 @@ const publicIp = require('public-ip');
 const stun = require('stun');
 const dtls = require('@nodertc/dtls');
 const sctp = require('@nodertc/sctp');
+const { createChannel } = require('@nodertc/datachannel');
 const unicast = require('unicast');
 const pem = require('pem-file');
 const fingerprint = require('./lib/fingerprint');
@@ -145,22 +146,24 @@ class Session extends Emitter {
    * @returns {string}
    */
   async createAnswer(offer) {
-    this.emit('offer', offer);
-
     this[_offer] = sdp.parse(offer);
+    this.emit('offer', this[_offer]);
 
-    const { media, fingerprint: fgprint } = this[_offer];
+    const { media, fingerprint: fgprint, groups } = this[_offer];
     const haveMediaData = Array.isArray(media) && media.length > 0;
 
     if (!haveMediaData) {
       throw new Error('Invalid SDP offer');
     }
 
-    const mediadata = media.find(item => item.protocol === 'DTLS/SCTP');
+    const mediadata = media.find(item => item.protocol.includes('DTLS/SCTP'));
 
     if (!mediadata) {
       throw new Error('Datachannel not found');
     }
+
+    const mid =
+      Array.isArray(groups) && groups.length > 0 ? groups[0].mids : 'data';
 
     const { candidates } = mediadata;
 
@@ -187,7 +190,7 @@ class Session extends Emitter {
       username: this.username,
       password: this[_icePassword],
       fingerprint: this[_fingerprint],
-      mid: 'data',
+      mid,
       candidates: [
         {
           ip: this[_internalIp],
@@ -325,8 +328,20 @@ class Session extends Emitter {
     this.sctp.on('connection', socket => {
       console.log('[nodertc][sctp] got a new connection!');
 
-      socket.on('data', packet => {
-        console.log('[nodertc][sctp] got data', packet.toString('hex'));
+      socket.on('stream', sctpStreamIn => {
+        console.log('[nodertc][sctp] got stream %s', sctpStreamIn.stream_id);
+
+        const sctpStreamOut = socket.createStream(sctpStreamIn.stream_id);
+
+        const channel = createChannel({
+          input: sctpStreamIn,
+          output: sctpStreamOut,
+          negotiated: true,
+        });
+
+        channel.once('open', () => {
+          this.emit('channel', channel);
+        });
       });
 
       socket.on('error', err => {

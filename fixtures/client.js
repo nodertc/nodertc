@@ -4,12 +4,13 @@
 
 const pcconfig = {
   iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
-  iceCandidatePoolSize: 0xff,
 };
 
 const pc = new RTCPeerConnection(pcconfig);
 
 pc.addEventListener('icecandidate', async ({ candidate }) => {
+  console.log('got candidate', candidate);
+
   if (candidate) {
     return;
   }
@@ -22,9 +23,9 @@ pc.addEventListener('icecandidate', async ({ candidate }) => {
 });
 
 pc.addEventListener('negotiationneeded', async () => {
-  const offer = await pc.createOffer({
-    iceRestart: true,
-  });
+  console.log('[dc] negotiationneeded');
+
+  const offer = await pc.createOffer();
   await pc.setLocalDescription(offer);
 });
 
@@ -50,8 +51,6 @@ const channel = pc.createDataChannel('console');
 
 channel.addEventListener('open', () => {
   console.log('[dc] channel is ready', channel);
-
-  channel.send(`Hello, world!`);
 });
 
 channel.addEventListener('close', () => {
@@ -60,6 +59,8 @@ channel.addEventListener('close', () => {
 
 channel.addEventListener('message', ({ data }) => {
   console.log('[dc] got message: %s', data.toString());
+
+  channel.send(`Hello, NodeRTC!`);
 });
 
 /**

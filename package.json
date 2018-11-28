@@ -37,6 +37,7 @@
     "prettier": "^1.14.2"
   },
   "dependencies": {
+    "@nodertc/datachannel": "^1.0.0",
     "@nodertc/dtls": "^0.5.0-0",
     "@nodertc/sctp": "^0.1.0",
     "internal-ip": "^3.0.1",
