@@ -6,7 +6,13 @@
 
 WebRTC Datachannels for Node.js
 
-## UNDER ~~ACTIVE~~ DEVELOPMENT
+### Support
+
+[![Buy Me A Coffee](https://www.buymeacoffee.com/assets/img/custom_images/purple_img.png)](https://www.buymeacoffee.com/reklatsmasters)
+
+## UNDER ACTIVE DEVELOPMENT
+
+Current stage: working prototype. Send your feedback and usage ideas to speed up development.
 
 ## Usage
 
