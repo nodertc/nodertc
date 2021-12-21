@@ -1,5 +1,6 @@
 'use strict';
 
+const dns = require('dns').promises;
 const assert = require('assert');
 const Emitter = require('events');
 const dgram = require('dgram');
@@ -177,6 +178,17 @@ class Session extends Emitter {
       throw new TypeError('Session should have at least one candidate');
     }
 
+    // translate ip address to ip version 4 using dns
+    await Promise.allSettled(
+      candidates.map(async (candidate) => {
+        if (isIPv4(candidate.ip)) return
+        const addr = await dns.lookup(candidate.ip)
+        if (addr.family == 4) {
+          candidate.ip = addr.address
+        }
+      })
+    );
+    
     candidates
       .filter(candidate => isIPv4(candidate.ip))
       .forEach(({ ip, port, priority }) => {
