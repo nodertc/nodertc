@@ -1,5 +1,6 @@
 'use strict';
 
+const dns = require('dns').promises;
 const assert = require('assert');
 const Emitter = require('events');
 const dgram = require('dgram');
@@ -177,12 +178,25 @@ class Session extends Emitter {
       throw new TypeError('Session should have at least one candidate');
     }
 
-    candidates
-      .filter(candidate => isIPv4(candidate.ip))
-      .forEach(({ ip, port, priority }) => {
+    // Async Add new candidates to the session
+    candidates.forEach(async (candidate) => {
+      const { ip, port, priority } = candidate;
+
+      if (isIPv4(ip)) {
         this.appendCandidate(ip, port, priority);
         this.emit('candidate');
-      });
+        return
+      }
+      // try resolve mDNS
+      // translate ip address in mDNS format to ip version 4 using dns
+      const addr = await dns.lookup(candidate.ip)
+        .catch(console.log)
+
+      if (addr.family == 4) {
+        this.appendCandidate(addr.address, port, priority);
+        this.emit('candidate');
+      }
+    })
 
     await this.listen();
 
