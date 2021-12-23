@@ -178,23 +178,25 @@ class Session extends Emitter {
       throw new TypeError('Session should have at least one candidate');
     }
 
-    // translate ip address to ip version 4 using dns
-    await Promise.allSettled(
-      candidates.map(async (candidate) => {
-        if (isIPv4(candidate.ip)) return
-        const addr = await dns.lookup(candidate.ip)
-        if (addr.family == 4) {
-          candidate.ip = addr.address
-        }
-      })
-    );
-    
-    candidates
-      .filter(candidate => isIPv4(candidate.ip))
-      .forEach(({ ip, port, priority }) => {
+    // Async Add new candidates to the session
+    candidates.forEach(async (candidate) => {
+      const { ip, port, priority } = candidate;
+
+      if (isIPv4(ip)) {
         this.appendCandidate(ip, port, priority);
         this.emit('candidate');
-      });
+        return
+      }
+      // try resolve mDNS
+      // translate ip address in mDNS format to ip version 4 using dns
+      const addr = await dns.lookup(candidate.ip)
+        .catch(console.log)
+
+      if (addr.family == 4) {
+        this.appendCandidate(addr.address, port, priority);
+        this.emit('candidate');
+      }
+    })
 
     await this.listen();
 
